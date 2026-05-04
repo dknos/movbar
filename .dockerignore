@@ -1,0 +1,25 @@
+# Secrets — explicit deny so a fat-fingered COPY can't ship them
+.env
+.env.*
+*.env
+.nemoclaw_env
+
+# Local caches and build artefacts
+node_modules/
+cache/
+__pycache__/
+*.pyc
+*.pid
+
+# Editor / OS
+.git/
+.gitignore
+.dockerignore
+.DS_Store
+*.log
+npm-debug.log*
+
+# Local-only stuff
+docs/
+NOTES.md
+/tmp/
