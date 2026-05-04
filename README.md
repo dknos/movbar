@@ -62,7 +62,25 @@ and stays under the throttle.
 - **avg** — area-average each frame to 1×1, then stretch to 1×1080. Cleaner,
   more abstract, reads better as a small thumbnail.
 
-## Install / run
+## Install (end users)
+
+The addon will eventually live in Stremio's Community Addons catalog.
+Until then, install via the configure page on whatever public host is
+serving it:
+
+1. Open `https://<host>/configure` in your browser.
+2. Paste your Real-Debrid API token (get it at
+   [real-debrid.com/apitoken](https://real-debrid.com/apitoken)).
+3. Pick a render mode (slice or avg).
+4. Click **Install** — Stremio launches and asks to add the addon.
+
+Your token is **only used to query Torrentio for cached streams**. It is
+never logged, never persisted, and never sent to any third party (other
+than Torrentio's stream-resolution call). Rendered barcode PNGs are
+cached on the host and shared across all users — they don't encode your
+token.
+
+## Run your own host
 
 ```bash
 git clone https://github.com/dknos/movbar.git
@@ -72,49 +90,45 @@ pip install Pillow
 node addon.js
 ```
 
-Open `http://127.0.0.1:9450/manifest.json` in Stremio (Add-ons →
-Community → Add a community add-on).
+The addon listens on `:9450`. For Stremio to reach it from another
+device, terminate TLS in front and set `MOVBAR_PUBLIC_HOST` /
+`MOVBAR_SCHEME=https` (see env table below). For quick testing,
+[cloudflared](https://github.com/cloudflare/cloudflared) quick tunnels work:
 
-### Required env
+```bash
+~/bin/cloudflared tunnel --url http://localhost:9450  # copy hostname
+MOVBAR_PUBLIC_HOST=<hostname> MOVBAR_SCHEME=https node addon.js
+```
 
-`worker.py` reads `~/.nemoclaw_env` for `REALDEBRID_TOKEN`. To use a
-different env path or pass the token directly, edit the `ENV` loader at the
-top of `worker.py`. (PR welcome — there's no good reason it shouldn't read
-`process.env.REALDEBRID_TOKEN` too.)
+For production, deploy to [Beamup](https://github.com/Stremio/stremio-beamup-cli)
+(Stremio's free addon hosting) — `npm i -g beamup-cli && beamup` from the
+repo root.
 
 ### Optional env
 
 | Var | Default | Purpose |
 |---|---|---|
 | `PORT` | `9450` | HTTP listen port |
-| `MOVBAR_PUBLIC_HOST` | `127.0.0.1:$PORT` | Host inserted into `meta.background` URLs |
+| `MOVBAR_PUBLIC_HOST` | `127.0.0.1:$PORT` | Host inserted into `meta.background` URLs returned to Stremio |
 | `MOVBAR_SCHEME` | `http` | Scheme for those URLs (`https` if behind a tunnel) |
-| `MOVBAR_MODE` | `slice` | `slice` or `avg` — render mode for new barcodes |
+| `MOVBAR_MAX_INFLIGHT` | `3` | Max concurrent renders. Each render spawns one ffmpeg-pool. |
 | `PYTHON` | `python3` | Python interpreter to invoke `worker.py` with |
 
-For a public install (Stremio on a Fire TV / phone reaching your render
-host), terminate TLS in front and set
-`MOVBAR_PUBLIC_HOST=movbar.example.com` and `MOVBAR_SCHEME=https`.
-[cloudflared](https://github.com/cloudflare/cloudflared) quick tunnels work
-fine for testing:
-
-```bash
-cloudflared tunnel --url http://localhost:9450
-# then export the printed *.trycloudflare.com hostname
-export MOVBAR_PUBLIC_HOST=<hostname>.trycloudflare.com
-export MOVBAR_SCHEME=https
-node addon.js
-```
+The `REALDEBRID_TOKEN` for renders comes from the per-user config in the
+manifest URL — **not** from server-side env. The worker does fall back to
+`MOVBAR_RD_TOKEN` and `~/.nemoclaw_env` if invoked directly via CLI, for
+local development.
 
 ## Endpoints
 
 | Path | What |
 |---|---|
-| `GET /manifest.json` | Stremio addon manifest |
-| `GET /meta/<type>/<id>.json` | Cinemeta proxy with `meta.background` overridden when a barcode is cached, otherwise kicks off render |
-| `GET /barcode/<imdb>_<mode>.png` | Cached barcode |
-| `GET /trigger/<imdb>?mode=slice\|avg` | Force-trigger render (debug) |
-| `GET /` | Status page |
+| `GET /configure` | HTML form: enter token, get install URL |
+| `GET /manifest.json` | Manifest (with `configurationRequired:true`) |
+| `GET /<config>/manifest.json` | Manifest for an installed user (config decoded into a JSON path segment) |
+| `GET /<config>/meta/<type>/<id>.json` | Cinemeta proxy with `meta.background` overridden when a barcode is cached, otherwise kicks off render keyed to the user's token |
+| `GET /barcode/<imdb>_<mode>.png` | Cached barcode (token-free; cache is shared across users) |
+| `GET /healthz` | JSON health/version |
 
 ## Direct CLI render
 
@@ -139,6 +153,21 @@ barcodes, `--force` to overwrite cached output.
 Time scales roughly linearly with `samples / parallel`. The wall is the RD
 HTTP latency × moov re-parse per ffmpeg invocation, not local CPU. Cranking
 parallel past ~16 stops helping (RD throttles per-IP).
+
+## Privacy & security
+
+- Your **Real-Debrid token** is supplied at install time via `/configure`,
+  travels in the manifest URL path segment over HTTPS only, and is decoded
+  per-request. It's **never logged**, **never written to disk**, and only
+  used to resolve a stream against Torrentio.
+- Token format is validated server-side (52-char uppercase alphanumeric)
+  before any subprocess spawn or upstream fetch. Malformed tokens are
+  rejected silently, so probing for tokens via the addon yields nothing.
+- ffmpeg error output is **URL-redacted** before logging — RD's resolved
+  stream URLs (which embed per-session auth) never reach stdout/stderr.
+- The rendered `cache/<imdb>_<mode>.png` files are **token-independent**
+  (same source video → same barcode regardless of who initiated it), so
+  they're safe to serve publicly.
 
 ## Limitations
 

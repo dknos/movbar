@@ -5,11 +5,25 @@ Two render paths:
   Avoids RD's sequential-read throttle. ~16 ffmpeg calls in flight.
 - file:// or local path: single-pass tile filter (fast, used for synth/local).
 """
-import io, json, os, subprocess, sys, time, urllib.request, urllib.error
+import io, json, os, re, subprocess, sys, time, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from PIL import Image
+
+
+_URL_REDACT_RE = re.compile(r"https?://[^\s'\"]+", re.IGNORECASE)
+
+
+def _redact(s):
+    """Strip URLs from log output. RD/Torrentio resolve URLs contain per-session
+    auth tokens — never print them. Bare error messages without URLs are fine."""
+    if isinstance(s, bytes):
+        try:
+            s = s.decode(errors="replace")
+        except Exception:
+            return "<undecodable>"
+    return _URL_REDACT_RE.sub("<url>", str(s))
 
 ROOT = Path(__file__).parent
 CACHE = ROOT / "cache"
@@ -19,13 +33,27 @@ CACHE.mkdir(exist_ok=True)
 FFMPEG = "/usr/bin/ffmpeg"
 FFPROBE = "/usr/bin/ffprobe"
 
-ENV = {}
-for line in Path.home().joinpath(".nemoclaw_env").read_text().splitlines():
-    if "=" in line and not line.startswith("#"):
-        k, _, v = line.partition("=")
-        ENV[k.strip()] = v.strip()
+def _load_rd_token():
+    """Token resolution order:
+    1. MOVBAR_RD_TOKEN env var (set by addon.js when serving a configured user)
+    2. REALDEBRID_TOKEN env var
+    3. ~/.nemoclaw_env REALDEBRID_TOKEN= line (legacy local CLI use)
+    Never logged in any path.
+    """
+    t = os.environ.get("MOVBAR_RD_TOKEN") or os.environ.get("REALDEBRID_TOKEN")
+    if t:
+        return t.strip()
+    env_file = Path.home() / ".nemoclaw_env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("REALDEBRID_TOKEN="):
+                return line.partition("=")[2].strip()
+    raise SystemExit(
+        "no Real-Debrid token: set MOVBAR_RD_TOKEN or REALDEBRID_TOKEN env var"
+    )
 
-RD = ENV["REALDEBRID_TOKEN"]
+
+RD = _load_rd_token()
 TORRENTIO_OPTS = "|".join([
     "providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl",
     "sort=qualitysize",
@@ -97,7 +125,7 @@ def resolve_rd_url(imdb_id, season=None, episode=None):
     candidates.sort(key=lambda s: (codec_rank(s), quality_rank(s)))
     pick = candidates[0]
     if not pick.get("url"):
-        raise RuntimeError(f"stream has no url field: {pick}")
+        raise RuntimeError(f"stream has no url field for {imdb_id}")
     return pick["url"], pick.get("name", ""), pick.get("title", "")
 
 
@@ -155,7 +183,7 @@ def _seek_one(url, t, mode, idx, total):
         return idx, None, f"timeout@{t:.0f}s"
     elapsed = time.time() - t0
     if proc.returncode != 0 or not proc.stdout:
-        return idx, None, f"rc={proc.returncode} {proc.stderr[-200:].decode(errors='replace')!r}"
+        return idx, None, f"rc={proc.returncode} {_redact(proc.stderr[-200:])!r}"
     return idx, proc.stdout, f"ok {elapsed:.1f}s"
 
 
@@ -235,7 +263,7 @@ def _render_local(url, out_path, mode):
     print(f"[local] duration={duration:.1f}s period={period:.3f}s mode={mode}", flush=True)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg exit {proc.returncode}: {proc.stderr[-400:]}")
+        raise RuntimeError(f"ffmpeg exit {proc.returncode}: {_redact(proc.stderr[-400:])}")
     return out_path
 
 

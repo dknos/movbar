@@ -1,22 +1,47 @@
 #!/usr/bin/env python3
-"""Register/update movbar in the slopfactory9000 Stremio account.
+"""Register/update a Stremio addon in your account's addon collection.
 
-Reads STREMIO_EMAIL, STREMIO_PASSWORD from ~/.nemoclaw_env.
-Pass the manifest URL as argv[1] (e.g. https://<tunnel>.trycloudflare.com/manifest.json).
+Useful during local development, before publishing to the public Community
+Addons catalog. Once published via SDK's `publishToCentral`, end-users install
+through the in-app catalog instead of this script.
 
-Idempotent: if a movbar addon is already in the collection (matched by manifest id),
-it's replaced with the freshly-fetched manifest at the new URL.
+Reads STREMIO_EMAIL and STREMIO_PASSWORD from environment, or from a dotenv-
+style file at ~/.nemoclaw_env (line format: KEY=value), whichever is set.
+
+Pass the manifest URL as argv[1] (e.g. https://<host>/manifest.json or
+https://<host>/<config-segment>/manifest.json for a configurable addon).
+
+Idempotent: if an addon with the same manifest id is already in the
+collection, it's replaced with the freshly-fetched manifest at the new URL.
 """
-import json, sys, urllib.request
+import json, os, sys, urllib.request
 from pathlib import Path
 
 API = "https://api.strem.io/api"
 
-env = {}
-for line in Path.home().joinpath(".nemoclaw_env").read_text().splitlines():
-    if "=" in line and not line.startswith("#"):
-        k, _, v = line.partition("=")
-        env[k.strip()] = v.strip()
+
+def _load_env():
+    """STREMIO_EMAIL / STREMIO_PASSWORD from os.environ first, then ~/.nemoclaw_env."""
+    out = {
+        "STREMIO_EMAIL": os.environ.get("STREMIO_EMAIL", ""),
+        "STREMIO_PASSWORD": os.environ.get("STREMIO_PASSWORD", ""),
+    }
+    env_file = Path.home() / ".nemoclaw_env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, _, v = line.partition("=")
+                k, v = k.strip(), v.strip()
+                if k in out and not out[k]:
+                    out[k] = v
+    if not out["STREMIO_EMAIL"] or not out["STREMIO_PASSWORD"]:
+        raise SystemExit(
+            "STREMIO_EMAIL / STREMIO_PASSWORD missing — set them in env or ~/.nemoclaw_env"
+        )
+    return out
+
+
+env = _load_env()
 
 
 def post(method, body):
