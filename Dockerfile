@@ -23,7 +23,8 @@ RUN mkdir -p cache
 
 ENV PORT=7000 \
     MOVBAR_SCHEME=https \
-    PYTHON=python3
+    PYTHON=python3 \
+    PYTHONUNBUFFERED=1
 
 EXPOSE 7000
 

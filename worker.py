@@ -71,10 +71,21 @@ TAIL_TRIM = 0.06       # skip last 6% (credits) — credits are mostly black bar
 UA = "Stremio/1.9.12"
 
 
-def fetch_json(url, timeout=25):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+def fetch_json(url, timeout=60, retries=2):
+    """Fetch JSON with retry. Beamup's container occasionally times out on the
+    first SSL handshake to Torrentio — a single retry usually clears it."""
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read())
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last = e
+            if attempt < retries:
+                time.sleep(2 ** attempt)
+                continue
+    raise RuntimeError(f"fetch_json failed after {retries + 1} attempts: {type(last).__name__}: {_redact(str(last))}")
 
 
 def resolve_rd_url(imdb_id, season=None, episode=None):
