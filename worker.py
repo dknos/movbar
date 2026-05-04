@@ -130,14 +130,23 @@ def resolve_rd_url(imdb_id, season=None, episode=None):
 
 
 def probe_duration(url):
-    out = subprocess.check_output([
+    cmd = [
         FFPROBE, "-v", "error",
         "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         "-user_agent", UA,
         url,
-    ], text=True, timeout=30)
-    return float(out.strip())
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("ffprobe timeout") from None
+    if proc.returncode != 0:
+        # Never let raw subprocess error bubble — process.args contains the URL.
+        raise RuntimeError(
+            f"ffprobe rc={proc.returncode}: {_redact(proc.stderr[-200:])}"
+        )
+    return float(proc.stdout.strip())
 
 
 def _per_frame_filter(mode):
@@ -285,7 +294,7 @@ def generate(imdb_id, mode="slice", season=None, episode=None, force=False):
 
 
 if __name__ == "__main__":
-    import argparse
+    import argparse, traceback
     p = argparse.ArgumentParser()
     p.add_argument("imdb_id")
     p.add_argument("--mode", choices=["slice", "avg"], default="slice")
@@ -299,6 +308,15 @@ if __name__ == "__main__":
         SAMPLES = args.samples
     if args.parallel:
         PARALLEL = args.parallel
-    out, status = generate(args.imdb_id, args.mode, args.season, args.episode, args.force)
+    # Redact any URL-bearing exception before it reaches stderr — uncaught Python
+    # tracebacks include subprocess args + variable reprs that may contain URLs.
+    try:
+        out, status = generate(
+            args.imdb_id, args.mode, args.season, args.episode, args.force
+        )
+    except Exception as e:
+        msg = _redact(traceback.format_exc())
+        sys.stderr.write(f"[error] {args.imdb_id} mode={args.mode}\n{msg}\n")
+        sys.exit(1)
     sz = out.stat().st_size
     print(f"[done] {status}: {out} ({sz/1024:.1f} KB)")
