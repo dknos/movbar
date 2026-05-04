@@ -1,0 +1,39 @@
+{
+  "name": "movbar",
+  "version": "0.0.3",
+  "description": "Stremio addon that overrides movie/series backgrounds with a 'movie barcode' — frames evenly sampled from the cached Real-Debrid stream and stitched into a 1920×1080 image.",
+  "main": "addon.js",
+  "scripts": {
+    "start": "node addon.js",
+    "render": "python3 worker.py"
+  },
+  "bin": {
+    "movbar": "./addon.js"
+  },
+  "keywords": [
+    "stremio",
+    "stremio-addon",
+    "movie-barcode",
+    "barcode",
+    "real-debrid",
+    "torrentio",
+    "ffmpeg"
+  ],
+  "author": "dknos",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dknos/movbar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dknos/movbar/issues"
+  },
+  "homepage": "https://github.com/dknos/movbar#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.22.1",
+    "stremio-addon-sdk": "^1.6.10"
+  }
+}
